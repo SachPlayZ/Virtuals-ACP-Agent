@@ -71,8 +71,14 @@ export async function generateVideo(
             { label: "shotstack-video-stitch", maxRetries: 2 }
         );
         log.info({ videoUrl }, "Video stitched");
-    } catch (err) {
-        log.warn({ error: err }, "Shotstack stitching failed, using first clip");
+    } catch (err: any) {
+        log.warn(
+            {
+                error: err.message,
+                shotstackError: err.response?.data || "No response data"
+            },
+            "Shotstack stitching failed, using first clip"
+        );
         videoUrl = successfulClips[0];
     }
 
@@ -206,7 +212,10 @@ async function pollShotstackRender(
 
         const status = res.data?.response?.status;
         if (status === "done") return res.data.response.url;
-        if (status === "failed") throw new Error(`Shotstack video render failed: ${renderId}`);
+        if (status === "failed") {
+            log.error({ shotstackResponse: res.data }, "Shotstack render failed during polling");
+            throw new Error(`Shotstack video render failed: ${renderId}`);
+        }
 
         await new Promise((r) => setTimeout(r, interval));
     }
@@ -285,8 +294,14 @@ async function generateFallbackVideo(
         if (!renderId) throw new Error("No render ID");
 
         return await pollShotstackRender(renderId, apiKey);
-    } catch (err) {
-        log.error({ error: err }, "Fallback video generation failed");
+    } catch (err: any) {
+        log.error(
+            {
+                error: err.message,
+                shotstackError: err.response?.data || "No response data"
+            },
+            "Fallback video generation failed"
+        );
         return bannerUrl;
     }
 }
