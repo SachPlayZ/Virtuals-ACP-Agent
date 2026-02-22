@@ -120,16 +120,16 @@ export async function runPipeline(
         banner.heroBannerUrl,
         input.style
     );
-    if (video.clipsSucceeded < 3) fallbacksUsed = true;
+    if (video.clipsSucceeded < 2) fallbacksUsed = true;
     log.info(
         {
             elapsed: `${stepTimer8.elapsed().toFixed(1)}s`,
             clipsSucceeded: video.clipsSucceeded,
             launchVideoUrl: video.launchVideoUrl,
         },
-        video.clipsSucceeded === 3
+        video.clipsSucceeded === 2
             ? "✅ Step 8: Video generated (all clips)"
-            : `⚠️ Step 8: Video generated (${video.clipsSucceeded}/3 clips)`
+            : `⚠️ Step 8: Video generated (${video.clipsSucceeded}/2 clips)`
     );
 
     // ── Step 9: Upload All Assets (done inside each module) ──
@@ -139,7 +139,7 @@ export async function runPipeline(
     const factors: ConfidenceFactors = {
         websiteFound: website.found,
         officialLogo,
-        allClipsSucceeded: video.clipsSucceeded === 3,
+        allClipsSucceeded: video.clipsSucceeded === 2,
         noFallbacksUsed: !fallbacksUsed,
     };
     const confidenceLevel = computeConfidence(factors);

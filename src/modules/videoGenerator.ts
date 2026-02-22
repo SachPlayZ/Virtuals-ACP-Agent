@@ -33,7 +33,6 @@ export async function generateVideo(
     const clipPrompts = [
         visualThemes.clip1_prompt,
         visualThemes.clip2_prompt,
-        visualThemes.clip3_prompt,
     ];
 
     const clipResults = await Promise.allSettled(
@@ -126,7 +125,7 @@ async function stitchViaShotstack(
     const apiKey = process.env.SHOTSTACK_API_KEY;
     if (!apiKey) throw new Error("SHOTSTACK_API_KEY not set");
 
-    const targetDuration = clipUrls.length >= 3 ? 12 : clipUrls.length === 2 ? 8 : 4;
+    const targetDuration = clipUrls.length >= 2 ? 8 : 4;
     const transitionOverlap = 0.5; // fade transition overlap
     const clipDuration = (targetDuration + transitionOverlap * (clipUrls.length - 1)) / clipUrls.length;
     const totalDuration = targetDuration;
