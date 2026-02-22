@@ -117,7 +117,8 @@ export async function runPipeline(
         ticker,
         posts.visualThemes,
         logo,
-        banner.heroBannerUrl
+        banner.heroBannerUrl,
+        input.style
     );
     if (video.clipsSucceeded < 3) fallbacksUsed = true;
     log.info(

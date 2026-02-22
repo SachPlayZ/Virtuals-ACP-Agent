@@ -26,7 +26,8 @@ export async function generateVideo(
     ticker: string,
     visualThemes: VisualThemes,
     logo: LogoResult,
-    bannerUrl: string
+    bannerUrl: string,
+    style: string
 ): Promise<VideoResult> {
     // Step 1: Generate 3 clips in parallel via Runway Gen-4.5
     const clipPrompts = [
@@ -58,7 +59,7 @@ export async function generateVideo(
 
     if (clipsSucceeded === 0) {
         log.warn("All clips failed, generating fallback video");
-        const fallbackUrl = await generateFallbackVideo(ticker, bannerUrl, logo);
+        const fallbackUrl = await generateFallbackVideo(ticker, bannerUrl, logo, style);
         return { launchVideoUrl: fallbackUrl, clipsSucceeded: 0 };
     }
 
@@ -66,7 +67,7 @@ export async function generateVideo(
     let videoUrl: string;
     try {
         videoUrl = await withRetry(
-            () => stitchViaShotstack(successfulClips, ticker, logo.brandColors),
+            () => stitchViaShotstack(successfulClips, ticker, logo.brandColors, style),
             { label: "shotstack-video-stitch", maxRetries: 2 }
         );
         log.info({ videoUrl }, "Video stitched");
@@ -113,7 +114,8 @@ async function generateRunwayClip(prompt: string): Promise<string> {
 async function stitchViaShotstack(
     clipUrls: string[],
     ticker: string,
-    colors: { primary: string; secondary: string }
+    colors: { primary: string; secondary: string },
+    style: string
 ): Promise<string> {
     const apiKey = process.env.SHOTSTACK_API_KEY;
     if (!apiKey) throw new Error("SHOTSTACK_API_KEY not set");
@@ -146,10 +148,12 @@ async function stitchViaShotstack(
         offset: { y: -0.08 },
     };
 
+    const soundtrackSrc = getSoundtrackForStyle(style);
+
     const timeline = {
         background: "#000000",
         soundtrack: {
-            src: "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/unminus/ambisax.mp3",
+            src: soundtrackSrc,
             effect: "fadeOut",
         },
         tracks: [
@@ -213,7 +217,8 @@ async function pollShotstackRender(
 async function generateFallbackVideo(
     ticker: string,
     bannerUrl: string,
-    logo: LogoResult
+    logo: LogoResult,
+    style: string
 ): Promise<string> {
     const apiKey = process.env.SHOTSTACK_API_KEY;
     if (!apiKey) {
@@ -221,10 +226,12 @@ async function generateFallbackVideo(
         return bannerUrl;
     }
 
+    const soundtrackSrc = getSoundtrackForStyle(style);
+
     const timeline = {
         background: "#000000",
         soundtrack: {
-            src: "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/unminus/ambisax.mp3",
+            src: soundtrackSrc,
             effect: "fadeOut",
         },
         tracks: [
@@ -299,5 +306,22 @@ async function finalizeAndUploadVideo(
     } catch (err) {
         log.warn({ error: err }, "Video upload failed, returning source URL");
         return videoUrl;
+    }
+}
+
+/**
+ * Maps the visual style to a matching royalty-free soundtrack URL.
+ */
+function getSoundtrackForStyle(style: string): string {
+    switch (style) {
+        case "cyberpunk":
+            return "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/freemusicarchive/cyberpunk-bass.mp3"; // high energy electronic
+        case "space":
+            return "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/unminus/ambisax.mp3"; // ambient/spacious
+        case "retro":
+            return "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/freemusicarchive/synthwave.mp3"; // retro synth
+        case "minimalist":
+        default:
+            return "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/unminus/dreamy.mp3"; // clean, chill beat
     }
 }
