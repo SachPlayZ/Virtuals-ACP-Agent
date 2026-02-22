@@ -1,0 +1,34 @@
+{
+  "name": "hypepack-pr",
+  "version": "1.0.0",
+  "description": "ACP Provider Agent — generates complete crypto launch media bundles",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.995.0",
+    "@runwayml/sdk": "^3.11.0",
+    "axios": "^1.13.5",
+    "cheerio": "^1.2.0",
+    "colorthief": "^2.6.0",
+    "dotenv": "^17.3.1",
+    "fastify": "^5.7.4",
+    "openai": "^6.22.0",
+    "pino": "^10.3.1",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "@types/sharp": "^0.31.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
