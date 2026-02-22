@@ -104,7 +104,7 @@ async function generateRunwayClip(prompt: string): Promise<string> {
             model: "gen4.5" as any,
             promptText: prompt,
             ratio: "1280:720" as any,
-            duration: 6,
+            duration: 4,
         })
         .waitForTaskOutput();
 
@@ -126,7 +126,7 @@ async function stitchViaShotstack(
     const apiKey = process.env.SHOTSTACK_API_KEY;
     if (!apiKey) throw new Error("SHOTSTACK_API_KEY not set");
 
-    const targetDuration = clipUrls.length >= 3 ? 15 : clipUrls.length === 2 ? 10 : 6;
+    const targetDuration = clipUrls.length >= 3 ? 12 : clipUrls.length === 2 ? 8 : 4;
     const transitionOverlap = 0.5; // fade transition overlap
     const clipDuration = (targetDuration + transitionOverlap * (clipUrls.length - 1)) / clipUrls.length;
     const totalDuration = targetDuration;
