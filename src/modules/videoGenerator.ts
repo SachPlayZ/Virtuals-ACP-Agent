@@ -176,12 +176,10 @@ async function stitchViaShotstack(
         offset: { y: -0.08 },
     };
 
-    const soundtrackSrc = getSoundtrackForStyle(style);
-
     const timeline = {
         background: "#000000",
         soundtrack: {
-            src: soundtrackSrc,
+            src: "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/unminus/ambisax.mp3",
             effect: "fadeOut",
         },
         tracks: [
