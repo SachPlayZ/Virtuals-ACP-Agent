@@ -62,11 +62,16 @@ export async function generateVideo(
         return { launchVideoUrl: fallbackUrl, clipsSucceeded: 0 };
     }
 
+    log.info("Proxying raw clips to S3 to bypass CDN restrictions...");
+    const proxiedClips = await Promise.all(
+        successfulClips.map((url, i) => proxyRunwayClip(url, ticker, i + 1))
+    );
+
     // Step 2: Stitch via Shotstack
     let videoUrl: string;
     try {
         videoUrl = await withRetry(
-            () => stitchViaShotstack(successfulClips, ticker, logo.brandColors, style),
+            () => stitchViaShotstack(proxiedClips, ticker, logo.brandColors, style),
             { label: "shotstack-video-stitch", maxRetries: 2 }
         );
         log.info({ videoUrl }, "Video stitched");
@@ -114,6 +119,24 @@ async function generateRunwayClip(prompt: string): Promise<string> {
     if (!outputUrl) throw new Error("No output URL from Runway task");
 
     return outputUrl;
+}
+
+/**
+ * Downloads the Runway clip and uploads it to S3.
+ * Shotstack's ingest engines often get 403 Forbidden from Runway's Cloudfront CDN.
+ */
+async function proxyRunwayClip(videoUrl: string, ticker: string, index: number): Promise<string> {
+    log.info({ clip: index }, "Proxying Runway clip to S3 for Shotstack ingestion...");
+    try {
+        const res = await axios.get(videoUrl, { responseType: "arraybuffer", timeout: 60000 });
+        const key = `videos/raw-${ticker.toLowerCase()}-${Date.now()}-${index}.mp4`;
+        const s3Url = await uploadBuffer(key, Buffer.from(res.data), "video/mp4");
+        log.info({ clip: index, s3Url }, "Clip proxied successfully");
+        return s3Url;
+    } catch (err: any) {
+        log.warn({ clip: index, error: err.message }, "Clip proxying failed, returning original URL");
+        return videoUrl;
+    }
 }
 
 async function stitchViaShotstack(
