@@ -1,59 +1,34 @@
 import OpenAI from "openai";
-import type {
-    CreativeBrief,
-    ToneProfile,
-    PostGenerationResult,
-    VisualThemes,
-    WebsiteScrapeResult,
-} from "../types/job.types.js";
 import { createChildLogger } from "../utils/logger.js";
 import { withRetry } from "../utils/retry.js";
-
 const log = createChildLogger("postGenerator");
-
 /**
  * Generate 3 X posts + visual themes using OpenAI GPT.
  * Driven by the Creative Brief + Tone Profile.
  */
-export async function generatePosts(
-    brief: CreativeBrief,
-    tone: ToneProfile,
-    website: WebsiteScrapeResult
-): Promise<PostGenerationResult> {
+export async function generatePosts(brief, tone, website) {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const model = process.env.OPENAI_MODEL || "gpt-4o";
-
     const systemPrompt = buildSystemPrompt(brief, tone);
     const userPrompt = buildUserPrompt(brief, tone, website);
-
-    const result = await withRetry(
-        async () => {
-            const completion = await client.chat.completions.create({
-                model,
-                max_completion_tokens: 2000,
-                temperature: 0.8,
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: userPrompt },
-                ],
-            });
-
-            const text = completion.choices[0]?.message?.content || "";
-            return parseResponse(text, brief.ticker, tone);
-        },
-        { label: "openai-post-gen", maxRetries: 2 }
-    );
-
-    log.info(
-        { postLengths: result.posts.map((p) => p.length) },
-        "Posts generated"
-    );
+    const result = await withRetry(async () => {
+        const completion = await client.chat.completions.create({
+            model,
+            max_completion_tokens: 2000,
+            temperature: 0.8,
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userPrompt },
+            ],
+        });
+        const text = completion.choices[0]?.message?.content || "";
+        return parseResponse(text, brief.ticker, tone);
+    }, { label: "openai-post-gen", maxRetries: 2 });
+    log.info({ postLengths: result.posts.map((p) => p.length) }, "Posts generated");
     return result;
 }
-
-function buildSystemPrompt(brief: CreativeBrief, tone: ToneProfile): string {
+function buildSystemPrompt(brief, tone) {
     const guardrailBlock = buildGuardrails(tone);
-
     return `You are an elite crypto marketing copywriter and visual director.
 You write viral X (Twitter) posts for token campaigns.
 Your posts are sharp, punchy, crypto-native — never cringe.
@@ -77,34 +52,25 @@ When generating the "visualThemes" (mood, color_cues, lighting, etc.), cleverly 
 ${guardrailBlock}
 RESPOND ONLY with valid JSON — no markdown, no commentary.`;
 }
-
-function buildGuardrails(tone: ToneProfile): string {
-    const rules: string[] = [];
-
+function buildGuardrails(tone) {
+    const rules = [];
     // Minimalist theme excludes hype words UNLESS intent = stealth
     if (tone.theme === "minimalist" && tone.intent !== "stealth") {
         rules.push("GUARDRAIL: Do NOT use the words LFG, Moon, Degen, Ape, or similar hype slang. Keep the tone clean and institutional.");
     }
-
     // Protocol tokens should avoid meme culture
     if (tone.utilityClass === "protocol" && tone.intent !== "engage") {
         rules.push("GUARDRAIL: Avoid meme culture references. This is a serious protocol — the language should reflect that.");
     }
-
     // Stealth intent should be mysterious and understated
     if (tone.intent === "stealth") {
         rules.push("GUARDRAIL: Be mysterious and understated. No overt shilling. Create intrigue, not FOMO.");
     }
-
-    if (rules.length === 0) return "";
+    if (rules.length === 0)
+        return "";
     return "\n" + rules.join("\n") + "\n";
 }
-
-function buildUserPrompt(
-    brief: CreativeBrief,
-    tone: ToneProfile,
-    website: WebsiteScrapeResult
-): string {
+function buildUserPrompt(brief, tone, website) {
     const contextBlock = website.found
         ? `The project has a real website. Extracted info:
 """
@@ -113,11 +79,9 @@ ${website.extractedText}
 You may reference ONE real utility from the website. Do NOT hallucinate features not mentioned.`
         : `No website exists for this token. Use the ticker "$${brief.ticker}" as a metaphor.
 Focus on vibe, FOMO, and narrative energy. Make NO fake utility claims.`;
-
     const socialBlock = brief.socialLinks.twitter
         ? `The project has active socials (Twitter: ${brief.socialLinks.twitter}).`
         : "";
-
     return `Generate a crypto campaign for $${brief.ticker} (${brief.projectName}).
 
 Project: ${brief.oneLiner}
@@ -154,38 +118,32 @@ STRICT RULES:
 - Visual themes must match the "${tone.theme}" aesthetic.
 - JSON only — no extra text.`;
 }
-
-function parseResponse(text: string, ticker: string, tone: ToneProfile): PostGenerationResult {
+function parseResponse(text, ticker, tone) {
     try {
         // Try to extract JSON from the response
         const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error("No JSON found in response");
-
+        if (!jsonMatch)
+            throw new Error("No JSON found in response");
         const parsed = JSON.parse(jsonMatch[0]);
-
         // Validate posts
         if (!Array.isArray(parsed.posts) || parsed.posts.length < 3) {
             throw new Error("Expected 3 posts in response");
         }
-
         // Enforce character limits — trim if needed
-        let posts = parsed.posts.slice(0, 3).map((post: string) => {
-            if (post.length > 280) return post.slice(0, 277) + "...";
+        let posts = parsed.posts.slice(0, 3).map((post) => {
+            if (post.length > 280)
+                return post.slice(0, 277) + "...";
             return post;
-        }) as [string, string, string];
-
+        });
         // Apply guardrails post-hoc
         if (tone.theme === "minimalist" && tone.intent !== "stealth") {
-            posts = posts.map((post) =>
-                post.replace(/\b(LFG|Moon|Degen|WAGMI)\b/gi, "")
-                    .replace(/\s{2,}/g, " ")
-                    .trim()
-            ) as [string, string, string];
+            posts = posts.map((post) => post.replace(/\b(LFG|Moon|Degen|WAGMI)\b/gi, "")
+                .replace(/\s{2,}/g, " ")
+                .trim());
         }
-
         // Validate visual themes
         const vt = parsed.visualThemes || {};
-        const visualThemes: VisualThemes = {
+        const visualThemes = {
             mood: vt.mood || `High-energy ${ticker} ${tone.intent}`,
             color_cues: vt.color_cues || "Neon blue and purple gradients",
             lighting_style: vt.lighting_style || "Cinematic dramatic lighting",
@@ -198,15 +156,14 @@ function parseResponse(text: string, ticker: string, tone: ToneProfile): PostGen
             clip3_prompt: vt.clip3_prompt || `${ticker} logo hold with tagline overlay`,
             image_prompt: vt.image_prompt || `Futuristic crypto banner for ${ticker}, cinematic`,
         };
-
         return { posts, visualThemes };
-    } catch (err) {
+    }
+    catch (err) {
         log.warn({ error: err }, "Failed to parse GPT response, using fallback");
         return buildFallbackResult(ticker);
     }
 }
-
-function buildFallbackResult(ticker: string): PostGenerationResult {
+function buildFallbackResult(ticker) {
     return {
         posts: [
             `$${ticker} just entered the chat and the energy is unmatched. This isn't just another token — it's a movement. Early believers know what's coming. The timeline is about to shift. Are you positioned? #crypto #${ticker} #web3 #bullish`.slice(0, 280),
@@ -226,3 +183,4 @@ function buildFallbackResult(ticker: string): PostGenerationResult {
         },
     };
 }
+//# sourceMappingURL=postGenerator.js.map

@@ -1,87 +1,61 @@
 import axios from "axios";
 import OpenAI from "openai";
 import sharp from "sharp";
-import type { BannerResult, VisualThemes, LogoResult, CreativeBrief, ToneProfile } from "../types/job.types.js";
 import { createChildLogger } from "../utils/logger.js";
 import { withRetry } from "../utils/retry.js";
 import { uploadBuffer } from "./assetUploader.js";
-
 const log = createChildLogger("bannerGenerator");
-
 /**
  * Get the Shotstack API base URL depending on environment.
  */
-function getShotstackBase(): string {
+function getShotstackBase() {
     const env = process.env.SHOTSTACK_ENV || "stage";
     return `https://api.shotstack.io/edit/${env}`;
 }
-
 /**
  * Generate a hero banner:
  * 1. Generate background via OpenAI DALL-E 3 (prompt built from Creative Brief + Tone Profile)
  * 2. Composite with logo + tagline via Shotstack
  * 3. Upload 1200×628 JPG to S3
  */
-export async function generateBanner(
-    ticker: string,
-    visualThemes: VisualThemes,
-    logo: LogoResult,
-    tagline: string,
-    brief: CreativeBrief,
-    tone: ToneProfile
-): Promise<BannerResult> {
+export async function generateBanner(ticker, visualThemes, logo, tagline, brief, tone) {
     // Step 1: Generate background image via DALL-E 3
-    let bgUrl: string;
+    let bgUrl;
     try {
         const dallePrompt = buildDallePrompt(visualThemes, brief, tone);
-        bgUrl = await withRetry(
-            () => generateBackground(dallePrompt),
-            { label: "dalle-bg-gen", maxRetries: 2 }
-        );
+        bgUrl = await withRetry(() => generateBackground(dallePrompt), { label: "dalle-bg-gen", maxRetries: 2 });
         log.info({ bgUrl }, "Background generated via DALL-E 3");
-    } catch (err) {
+    }
+    catch (err) {
         log.warn({ error: err }, "Background generation failed, using fallback");
         bgUrl = await generateFallbackBackground(ticker, logo.brandColors);
     }
-
     // Step 2: Composite via Shotstack
-    let compositeUrl: string;
+    let compositeUrl;
     try {
-        compositeUrl = await withRetry(
-            () =>
-                compositeViaShotstack(bgUrl, logo.finalLogoUrl, tagline, logo.brandColors),
-            { label: "shotstack-banner", maxRetries: 2 }
-        );
+        compositeUrl = await withRetry(() => compositeViaShotstack(bgUrl, logo.finalLogoUrl, tagline, logo.brandColors), { label: "shotstack-banner", maxRetries: 2 });
         log.info({ compositeUrl }, "Banner composited via Shotstack");
-    } catch (err) {
+    }
+    catch (err) {
         log.warn({ error: err }, "Shotstack composite failed, using background only");
         compositeUrl = bgUrl;
     }
-
     // Step 3: Download, resize to 1200×628, and upload
     const finalUrl = await finalizeAndUpload(compositeUrl, ticker);
-
     return { heroBannerUrl: finalUrl };
 }
-
 /**
  * Build a rich DALL-E prompt from Creative Brief + Tone Profile + Visual Themes.
  */
-function buildDallePrompt(
-    visualThemes: VisualThemes,
-    brief: CreativeBrief,
-    tone: ToneProfile
-): string {
+function buildDallePrompt(visualThemes, brief, tone) {
     return `${visualThemes.image_prompt}. 
 Style: ${tone.theme} aesthetic, ${tone.profileName} tone. 
 Brand colors: ${brief.brandColors.primary} and ${brief.brandColors.secondary}. 
 Project: ${brief.projectName}. 
 Ultra high resolution, cinematic, no text, no typography, no letters, no words.`;
 }
-
-async function generateBackground(prompt: string): Promise<string> {
+async function generateBackground(prompt) {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
     const response = await client.images.generate({
         model: "dall-e-3",
         prompt,
@@ -89,17 +63,12 @@ async function generateBackground(prompt: string): Promise<string> {
         size: "1792x1024",
         quality: "hd",
     });
-
     const imageUrl = response.data?.[0]?.url;
-    if (!imageUrl) throw new Error("No image URL in DALL-E response");
-
+    if (!imageUrl)
+        throw new Error("No image URL in DALL-E response");
     return imageUrl;
 }
-
-async function generateFallbackBackground(
-    ticker: string,
-    colors: { primary: string; secondary: string }
-): Promise<string> {
+async function generateFallbackBackground(ticker, colors) {
     // Generate a gradient placeholder and upload to S3
     const svg = `<svg width="1200" height="628" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -119,21 +88,14 @@ async function generateFallbackBackground(
       $${ticker.toUpperCase()}
     </text>
   </svg>`;
-
     const buffer = await sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
     const key = `banners/fallback-${ticker.toLowerCase()}-${Date.now()}.jpg`;
     return uploadBuffer(key, buffer, "image/jpeg");
 }
-
-async function compositeViaShotstack(
-    bgUrl: string,
-    logoUrl: string,
-    tagline: string,
-    colors: { primary: string; secondary: string }
-): Promise<string> {
+async function compositeViaShotstack(bgUrl, logoUrl, tagline, colors) {
     const apiKey = process.env.SHOTSTACK_API_KEY;
-    if (!apiKey) throw new Error("SHOTSTACK_API_KEY not set");
-
+    if (!apiKey)
+        throw new Error("SHOTSTACK_API_KEY not set");
     const timeline = {
         background: "#000000",
         tracks: [
@@ -180,49 +142,34 @@ async function compositeViaShotstack(
             },
         ],
     };
-
-    const renderRes = await axios.post(
-        `${getShotstackBase()}/render`,
-        {
-            timeline,
-            output: {
-                format: "jpg",
-                resolution: "hd",
-                size: { width: 1200, height: 628 },
-            },
+    const renderRes = await axios.post(`${getShotstackBase()}/render`, {
+        timeline,
+        output: {
+            format: "jpg",
+            resolution: "hd",
+            size: { width: 1200, height: 628 },
         },
-        {
-            headers: {
-                "x-api-key": apiKey,
-                "Content-Type": "application/json",
-            },
-            timeout: 30000,
-        }
-    );
-
+    }, {
+        headers: {
+            "x-api-key": apiKey,
+            "Content-Type": "application/json",
+        },
+        timeout: 30000,
+    });
     const renderId = renderRes.data?.response?.id;
-    if (!renderId) throw new Error("No render ID from Shotstack");
-
+    if (!renderId)
+        throw new Error("No render ID from Shotstack");
     return await pollShotstackRender(renderId, apiKey);
 }
-
-async function pollShotstackRender(
-    renderId: string,
-    apiKey: string
-): Promise<string> {
+async function pollShotstackRender(renderId, apiKey) {
     const maxWait = 120_000;
     const interval = 5_000;
     const start = Date.now();
-
     while (Date.now() - start < maxWait) {
-        const res = await axios.get(
-            `${getShotstackBase()}/render/${renderId}`,
-            {
-                headers: { "x-api-key": apiKey },
-                timeout: 10000,
-            }
-        );
-
+        const res = await axios.get(`${getShotstackBase()}/render/${renderId}`, {
+            headers: { "x-api-key": apiKey },
+            timeout: 10000,
+        });
         const status = res.data?.response?.status;
         if (status === "done") {
             return res.data.response.url;
@@ -230,29 +177,22 @@ async function pollShotstackRender(
         if (status === "failed") {
             throw new Error(`Shotstack render failed: ${renderId}`);
         }
-
         await new Promise((r) => setTimeout(r, interval));
     }
-
     throw new Error(`Shotstack render timed out: ${renderId}`);
 }
-
-async function finalizeAndUpload(
-    imageUrl: string,
-    ticker: string
-): Promise<string> {
+async function finalizeAndUpload(imageUrl, ticker) {
     // Download the image
     const res = await axios.get(imageUrl, {
         responseType: "arraybuffer",
         timeout: 30000,
     });
-
     // Resize to exact dimensions and convert to JPEG
     const buffer = await sharp(Buffer.from(res.data))
         .resize(1200, 628, { fit: "cover" })
         .jpeg({ quality: 90 })
         .toBuffer();
-
     const key = `banners/${ticker.toLowerCase()}-${Date.now()}.jpg`;
     return uploadBuffer(key, buffer, "image/jpeg");
 }
+//# sourceMappingURL=bannerGenerator.js.map
