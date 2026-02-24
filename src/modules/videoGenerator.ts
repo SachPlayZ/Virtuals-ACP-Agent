@@ -352,16 +352,18 @@ async function finalizeAndUploadVideo(
  * Maps the visual theme to a matching royalty-free soundtrack URL.
  */
 function getSoundtrackForTheme(theme: string): string {
+    // NOTE: Shotstack assets bucket uses hyphenated region: s3-ap-southeast-2 (NOT s3.ap-southeast-2)
+    // Verified working tracks: ambisax.mp3, palmtrees.mp3, lit.mp3
+    const base = "https://shotstack-assets.s3-ap-southeast-2.amazonaws.com/music/unminus";
     switch (theme) {
         case "cyberpunk":
-            return "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/freemusicarchive/cyberpunk-bass.mp3";
-        case "space":
-            return "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/unminus/ambisax.mp3";
+            return `${base}/lit.mp3`;           // energetic electronic
         case "retro-arcade":
         case "retro":
-            return "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/freemusicarchive/synthwave.mp3";
+            return `${base}/palmtrees.mp3`;     // chill retro vibe
+        case "space":
         case "minimalist":
         default:
-            return "https://shotstack-assets.s3.ap-southeast-2.amazonaws.com/music/unminus/dreamy.mp3";
+            return `${base}/ambisax.mp3`;       // ambient / atmospheric
     }
 }
