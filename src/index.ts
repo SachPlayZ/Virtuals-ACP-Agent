@@ -1,6 +1,7 @@
 import "dotenv/config";
 import Fastify from "fastify";
 import { registerGenerateRoute } from "./api/generate.js";
+import { startAcpProvider } from "./acp/acpProvider.js";
 import { logger } from "./utils/logger.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -15,6 +16,20 @@ async function main() {
 
     // Register routes
     await registerGenerateRoute(app);
+
+    // Start ACP Provider (if configured)
+    const acpConfigured = process.env.ACP_WALLET_PRIVATE_KEY && process.env.ACP_ENTITY_ID && process.env.ACP_AGENT_WALLET_ADDRESS;
+    if (acpConfigured) {
+        try {
+            await startAcpProvider();
+            logger.info("🔗 ACP Provider connected to Virtuals Protocol");
+        } catch (err) {
+            const e = err as Error;
+            logger.error({ error: e.message, stack: e.stack }, "⚠️ ACP Provider failed to start — continuing with HTTP-only mode");
+        }
+    } else {
+        logger.warn("ACP env vars not set (ACP_WALLET_PRIVATE_KEY, ACP_ENTITY_ID, ACP_AGENT_WALLET_ADDRESS) — skipping ACP provider");
+    }
 
     // Graceful shutdown
     const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
