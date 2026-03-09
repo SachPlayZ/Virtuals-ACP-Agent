@@ -153,12 +153,12 @@ export async function runPipeline(
             }),
         generateVideo(ticker, posts.visualThemes, logo, logo.finalLogoUrl, brief, tone, ctaText)
             .then((v) => {
-                if (v.clipsSucceeded < 2) fallbacksUsed = true;
+                if (v.clipsSucceeded < 3) fallbacksUsed = true;
                 log.info(
                     { clipsSucceeded: v.clipsSucceeded, launchVideoUrl: v.launchVideoUrl },
-                    v.clipsSucceeded === 2
+                    v.clipsSucceeded === 3
                         ? "✅ Video generated (all clips)"
-                        : `⚠️ Video generated (${v.clipsSucceeded}/2 clips)`
+                        : `⚠️ Video generated (${v.clipsSucceeded}/3 clips)`
                 );
                 return v;
             }),
@@ -175,7 +175,7 @@ export async function runPipeline(
     const factors: ConfidenceFactors = {
         websiteFound: website.found,
         officialLogo,
-        allClipsSucceeded: videoResult.clipsSucceeded === 2,
+        allClipsSucceeded: videoResult.clipsSucceeded === 3,
         noFallbacksUsed: !fallbacksUsed,
     };
     const confidenceLevel = computeConfidence(factors);

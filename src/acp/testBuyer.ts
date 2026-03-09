@@ -142,8 +142,8 @@ async function buyer() {
 
     const jobId = await chosenOffering.initiateJob(
         {
-            ticker: "BRETT",
-            intent: "hype",
+            ticker: "GOAT",
+            intent: "stealth",
         },
         undefined, // evaluator address — undefined = skip-evaluation
     );

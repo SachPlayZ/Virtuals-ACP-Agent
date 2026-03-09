@@ -17,8 +17,8 @@ function getShotstackBase(): string {
 }
 
 /**
- * Generate an 8s launch video:
- * 1. Generate 2 clips in parallel via Runway Gen-4.5 (official SDK)
+ * Generate a 12s launch video:
+ * 1. Generate 3 clips in parallel via Runway Gen-4.5 (official SDK)
  * 2. Stitch clips + transitions + music via Shotstack
  * 3. Export 1280×720 MP4, upload to S3
  */
@@ -31,10 +31,11 @@ export async function generateVideo(
     tone: ToneProfile,
     ctaText?: string
 ): Promise<VideoResult> {
-    // Step 1: Generate 2 clips in parallel via Runway Gen-4.5
+    // Step 1: Generate 3 clips in parallel via Runway Gen-4.5
     const clipPrompts = [
         visualThemes.clip1_prompt,
         visualThemes.clip2_prompt,
+        visualThemes.clip3_prompt,
     ];
 
     const clipResults = await Promise.allSettled(
@@ -151,7 +152,8 @@ async function stitchViaShotstack(
     const apiKey = process.env.SHOTSTACK_API_KEY;
     if (!apiKey) throw new Error("SHOTSTACK_API_KEY not set");
 
-    const targetDuration = clipUrls.length >= 2 ? 8 : 4;
+    // 3 clips → 12s, 2 clips → 8s, 1 clip → 4s
+    const targetDuration = clipUrls.length >= 3 ? 12 : clipUrls.length >= 2 ? 8 : 4;
     const transitionOverlap = 0.5; // fade transition overlap
     const clipDuration = (targetDuration + transitionOverlap * (clipUrls.length - 1)) / clipUrls.length;
     const totalDuration = targetDuration;
@@ -349,60 +351,52 @@ async function finalizeAndUploadVideo(
 }
 
 /**
- * Maps the visual theme to a matching royalty-free soundtrack URL.
- * All URLs verified 2026-03-07 — HTTP 200, real audio response.
+ * All 7 verified royalty-free soundtrack URLs.
+ * Verified 2026-03-07 — HTTP 200, real audio response.
  */
-function getSoundtrackForTheme(theme: string): string {
-    // NOTE: Shotstack assets bucket uses hyphenated region: s3-ap-southeast-2 (NOT s3.ap-southeast-2)
+const SOUNDTRACK_POOL = (() => {
     const unminus = "https://shotstack-assets.s3-ap-southeast-2.amazonaws.com/music/unminus";
     const freepd = "https://shotstack-assets.s3-ap-southeast-2.amazonaws.com/music/freepd";
+    return [
+        { id: "lit", url: `${unminus}/lit.mp3`, tags: ["cyberpunk", "neon", "hype", "electronic"] },
+        { id: "berlin", url: `${unminus}/berlin.mp3`, tags: ["electronic", "futuristic", "techno", "cyberpunk"] },
+        { id: "palmtrees", url: `${unminus}/palmtrees.mp3`, tags: ["retro-arcade", "retro", "vaporwave", "chill"] },
+        { id: "reggae", url: `${unminus}/reggae.mp3`, tags: ["tropical", "island", "fun", "culture"] },
+        { id: "advertising", url: `${freepd}/advertising.mp3`, tags: ["corporate", "professional", "startup", "upbeat"] },
+        { id: "motions", url: `${freepd}/motions.mp3`, tags: ["cinematic", "dramatic", "emotional", "epic", "space"] },
+        { id: "ambisax", url: `${unminus}/ambisax.mp3`, tags: ["ambient", "minimalist", "calm", "space"] },
+    ];
+})();
 
-    switch (theme) {
-        // High-energy / hype
-        case "cyberpunk":
-        case "neon":
-        case "hype":
-            return `${unminus}/lit.mp3`;            // energetic electronic
+/**
+ * Dynamically selects a soundtrack from the pool of 7 tracks.
+ * Uses weighted random selection: tracks whose tags match the theme get
+ * a higher weight (3×) but every track has a chance to be picked.
+ * This prevents the same track from always playing for a given theme.
+ */
+function getSoundtrackForTheme(theme: string): string {
+    const lowerTheme = theme.toLowerCase();
 
-        // Electronic / club
-        case "electronic":
-        case "futuristic":
-        case "techno":
-            return `${unminus}/berlin.mp3`;         // driving electronic / techno
+    // Build weighted pool: matching tracks get weight 3, others get weight 1
+    const weighted: { url: string; id: string; weight: number }[] = SOUNDTRACK_POOL.map((t) => ({
+        url: t.url,
+        id: t.id,
+        weight: t.tags.includes(lowerTheme) ? 3 : 1,
+    }));
 
-        // Chill / retro
-        case "retro-arcade":
-        case "retro":
-        case "vaporwave":
-            return `${unminus}/palmtrees.mp3`;      // chill retro vibe
+    const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
+    let rand = Math.random() * totalWeight;
 
-        // Tropical / fun
-        case "tropical":
-        case "island":
-        case "reggae":
-        case "fun":
-            return `${unminus}/reggae.mp3`;         // reggae / tropical
-
-        // Corporate / upbeat / professional
-        case "corporate":
-        case "professional":
-        case "startup":
-        case "upbeat":
-            return `${freepd}/advertising.mp3`;     // upbeat corporate
-
-        // Cinematic / dramatic / emotional
-        case "cinematic":
-        case "dramatic":
-        case "emotional":
-        case "epic":
-            return `${freepd}/motions.mp3`;         // cinematic / emotional
-
-        // Ambient / atmospheric (default)
-        case "space":
-        case "minimalist":
-        case "calm":
-        case "ambient":
-        default:
-            return `${unminus}/ambisax.mp3`;        // ambient / atmospheric
+    for (const entry of weighted) {
+        rand -= entry.weight;
+        if (rand <= 0) {
+            log.info({ selectedTrack: entry.id, theme }, "🎵 Soundtrack selected");
+            return entry.url;
+        }
     }
+
+    // Fallback (should never reach here)
+    const fallback = weighted[Math.floor(Math.random() * weighted.length)];
+    log.info({ selectedTrack: fallback.id, theme }, "🎵 Soundtrack fallback selected");
+    return fallback.url;
 }
