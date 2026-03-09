@@ -350,20 +350,59 @@ async function finalizeAndUploadVideo(
 
 /**
  * Maps the visual theme to a matching royalty-free soundtrack URL.
+ * All URLs verified 2026-03-07 — HTTP 200, real audio response.
  */
 function getSoundtrackForTheme(theme: string): string {
     // NOTE: Shotstack assets bucket uses hyphenated region: s3-ap-southeast-2 (NOT s3.ap-southeast-2)
-    // Verified working tracks: ambisax.mp3, palmtrees.mp3, lit.mp3
-    const base = "https://shotstack-assets.s3-ap-southeast-2.amazonaws.com/music/unminus";
+    const unminus = "https://shotstack-assets.s3-ap-southeast-2.amazonaws.com/music/unminus";
+    const freepd = "https://shotstack-assets.s3-ap-southeast-2.amazonaws.com/music/freepd";
+
     switch (theme) {
+        // High-energy / hype
         case "cyberpunk":
-            return `${base}/lit.mp3`;           // energetic electronic
+        case "neon":
+        case "hype":
+            return `${unminus}/lit.mp3`;            // energetic electronic
+
+        // Electronic / club
+        case "electronic":
+        case "futuristic":
+        case "techno":
+            return `${unminus}/berlin.mp3`;         // driving electronic / techno
+
+        // Chill / retro
         case "retro-arcade":
         case "retro":
-            return `${base}/palmtrees.mp3`;     // chill retro vibe
+        case "vaporwave":
+            return `${unminus}/palmtrees.mp3`;      // chill retro vibe
+
+        // Tropical / fun
+        case "tropical":
+        case "island":
+        case "reggae":
+        case "fun":
+            return `${unminus}/reggae.mp3`;         // reggae / tropical
+
+        // Corporate / upbeat / professional
+        case "corporate":
+        case "professional":
+        case "startup":
+        case "upbeat":
+            return `${freepd}/advertising.mp3`;     // upbeat corporate
+
+        // Cinematic / dramatic / emotional
+        case "cinematic":
+        case "dramatic":
+        case "emotional":
+        case "epic":
+            return `${freepd}/motions.mp3`;         // cinematic / emotional
+
+        // Ambient / atmospheric (default)
         case "space":
         case "minimalist":
+        case "calm":
+        case "ambient":
         default:
-            return `${base}/ambisax.mp3`;       // ambient / atmospheric
+            return `${unminus}/ambisax.mp3`;        // ambient / atmospheric
     }
 }

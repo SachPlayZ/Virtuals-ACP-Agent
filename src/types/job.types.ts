@@ -105,6 +105,7 @@ export interface GenerateJobOutput {
     x_post_1: string;
     x_post_2: string;
     x_post_3: string;
+    produced_by: string;
     brand_colors: {
         primary: string;
         secondary: string;

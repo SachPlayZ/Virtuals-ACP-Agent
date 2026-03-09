@@ -1,0 +1,29 @@
+services:
+  hypepack-pr:
+    build: .
+    image: hypepack-pr:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # ── OpenAI ──
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      # ── Runway ──
+      - RUNWAY_API_KEY=${RUNWAY_API_KEY}
+      # ── Shotstack ──
+      - SHOTSTACK_API_KEY=${SHOTSTACK_API_KEY}
+      - SHOTSTACK_ENV=${SHOTSTACK_ENV:-v1}
+      # ── AWS / S3 ──
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-ap-south-1}
+      - S3_BUCKET=${S3_BUCKET}
+      - S3_PUBLIC_URL=${S3_PUBLIC_URL:-}
+      # ── ACP (Virtuals Protocol) ──
+      - ACP_WALLET_PRIVATE_KEY=${ACP_WALLET_PRIVATE_KEY}
+      - ACP_ENTITY_ID=${ACP_ENTITY_ID}
+      - ACP_AGENT_WALLET_ADDRESS=${ACP_AGENT_WALLET_ADDRESS}
+      # ── Server ──
+      - PORT=3000
+      - HOST=0.0.0.0

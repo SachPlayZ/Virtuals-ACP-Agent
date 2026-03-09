@@ -9,18 +9,14 @@ import { uploadBuffer } from "./assetUploader.js";
 const log = createChildLogger("bannerGenerator");
 
 /**
- * Get the Shotstack API base URL depending on environment.
- */
-function getShotstackBase(): string {
-    const env = process.env.SHOTSTACK_ENV || "stage";
-    return `https://api.shotstack.io/edit/${env}`;
-}
-
-/**
  * Generate a hero banner:
- * 1. Generate background via OpenAI DALL-E 3 (prompt built from Creative Brief + Tone Profile)
- * 2. Composite with logo + tagline via Shotstack
- * 3. Upload 1200×628 JPG to S3
+ * 1. Download the token logo
+ * 2. Pass the logo + a rich prompt to gpt-image-1 (images.edit) so the banner
+ *    organically integrates the logo into the design — no crude pasting
+ * 3. Upload the final 1200×628 JPG to S3
+ *
+ * Fallback chain:
+ *   gpt-image-1 edit → DALL-E 3 generate (no logo) → gradient fallback
  */
 export async function generateBanner(
     ticker: string,
@@ -30,77 +26,189 @@ export async function generateBanner(
     brief: CreativeBrief,
     tone: ToneProfile
 ): Promise<BannerResult> {
-    // Step 1: Generate background image via DALL-E 3
-    let bgUrl: string;
+    let bannerBuffer: Buffer | null = null;
+
+    // Primary: gpt-image-1 edit with logo as reference image
     try {
-        const dallePrompt = buildDallePrompt(visualThemes, brief, tone);
-        bgUrl = await withRetry(
-            () => generateBackground(dallePrompt),
-            { label: "dalle-bg-gen", maxRetries: 2 }
+        bannerBuffer = await withRetry(
+            () => generateBannerWithLogo(visualThemes, logo, tagline, brief, tone),
+            { label: "gpt-image-banner", maxRetries: 2 }
         );
-        log.info({ bgUrl }, "Background generated via DALL-E 3");
-    } catch (err) {
-        log.warn({ error: err }, "Background generation failed, using fallback");
-        bgUrl = await generateFallbackBackground(ticker, logo.brandColors);
+        log.info("Banner generated via gpt-image-1 with integrated logo");
+    } catch (err: any) {
+        log.warn({ error: err.message }, "gpt-image-1 banner failed, falling back to DALL-E 3");
     }
 
-    // Step 2: Composite via Shotstack
-    let compositeUrl: string;
-    try {
-        compositeUrl = await withRetry(
-            () =>
-                compositeViaShotstack(bgUrl, logo.finalLogoUrl, tagline, logo.brandColors),
-            { label: "shotstack-banner", maxRetries: 2 }
-        );
-        log.info({ compositeUrl }, "Banner composited via Shotstack");
-    } catch (err) {
-        log.warn({ error: err }, "Shotstack composite failed, using background only");
-        compositeUrl = bgUrl;
+    // Fallback: DALL-E 3 text-to-image (no logo integration)
+    if (!bannerBuffer) {
+        try {
+            const fallbackPrompt = buildFallbackPrompt(visualThemes, brief, tone, tagline);
+            bannerBuffer = await withRetry(
+                () => generateWithoutLogo(fallbackPrompt),
+                { label: "gpt-image-fallback", maxRetries: 2 }
+            );
+            log.info("Banner generated via gpt-image-1 fallback (no logo)");
+        } catch (err: any) {
+            log.warn({ error: err.message }, "gpt-image-1 fallback failed, using gradient");
+        }
     }
 
-    // Step 3: Download, resize to 1200×628, and upload
-    const finalUrl = await finalizeAndUpload(compositeUrl, ticker);
+    // Last resort: gradient placeholder
+    if (!bannerBuffer) {
+        bannerBuffer = await generateFallbackGradient(ticker, logo.brandColors);
+        log.info("Using gradient fallback banner");
+    }
+
+    // Resize to exact banner dimensions and upload
+    const finalBuffer = await sharp(bannerBuffer)
+        .resize(1200, 628, { fit: "cover" })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+
+    const key = `banners/${ticker.toLowerCase()}-${Date.now()}.jpg`;
+    const finalUrl = await uploadBuffer(key, finalBuffer, "image/jpeg");
 
     return { heroBannerUrl: finalUrl };
 }
 
 /**
- * Build a rich DALL-E prompt from Creative Brief + Tone Profile + Visual Themes.
+ * Downloads the logo, then calls gpt-image-1 images.edit with the logo as
+ * a reference image. The model generates a full banner design that naturally
+ * blends the logo into the scene, matching colors and style.
  */
-function buildDallePrompt(
+async function generateBannerWithLogo(
     visualThemes: VisualThemes,
+    logo: LogoResult,
+    tagline: string,
+    brief: CreativeBrief,
+    tone: ToneProfile
+): Promise<Buffer> {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    // Download the logo as a buffer
+    log.info({ logoUrl: logo.finalLogoUrl }, "Downloading logo for banner generation");
+    const logoRes = await axios.get(logo.finalLogoUrl, {
+        responseType: "arraybuffer",
+        timeout: 15000,
+    });
+
+    // Convert to PNG for gpt-image-1 compatibility (it requires png/webp/jpg)
+    const logoPng = await sharp(Buffer.from(logoRes.data))
+        .png()
+        .toBuffer();
+
+    const logoFile = new File([new Uint8Array(logoPng)], "logo.png", { type: "image/png" });
+
+    const prompt = buildEditPrompt(visualThemes, logo, tagline, brief, tone);
+    log.info({ promptLength: prompt.length }, "Sending logo + prompt to gpt-image-1");
+
+    const response = await client.images.edit({
+        model: "gpt-image-1",
+        image: logoFile,
+        prompt,
+        n: 1,
+        size: "1536x1024",
+        quality: "high",
+    });
+
+    const b64 = response.data?.[0]?.b64_json;
+    if (!b64) throw new Error("No b64_json in gpt-image-1 response");
+
+    return Buffer.from(b64, "base64");
+}
+
+/**
+ * Build a detailed prompt for gpt-image-1 edit mode.
+ * The prompt instructs the model to create a complete banner design that
+ * organically integrates the provided logo image.
+ */
+function buildEditPrompt(
+    visualThemes: VisualThemes,
+    logo: LogoResult,
+    tagline: string,
     brief: CreativeBrief,
     tone: ToneProfile
 ): string {
-    return `${visualThemes.image_prompt}. 
-Style: ${tone.theme} aesthetic, ${tone.profileName} tone. 
-Brand colors: ${brief.brandColors.primary} and ${brief.brandColors.secondary}. 
-Project: ${brief.projectName}. 
-Ultra high resolution, cinematic, no text, no typography, no letters, no words.`;
+    return `Create a stunning, professional hero banner (landscape, 1536x1024) for a crypto token launch.
+
+LOGO INTEGRATION:
+- The attached image is the token's logo. Integrate it naturally into the banner design.
+- Place the logo prominently but organically — it should feel like part of the design, not pasted on top.
+- The logo should be clearly recognizable and undistorted.
+
+DESIGN DIRECTION:
+${visualThemes.image_prompt}
+
+STYLE & AESTHETIC:
+- Theme: ${tone.theme}
+- Tone: ${tone.profileName}
+- Brand colors: primary ${brief.brandColors.primary}, secondary ${brief.brandColors.secondary}
+- Use these colors throughout the design — in gradients, lighting, accents, and atmospheric effects.
+
+TEXT TO INCLUDE:
+- Include the tagline "${tagline}" in a clean, modern font that complements the design.
+- The text should be legible, well-positioned, and styled to match the overall aesthetic.
+
+PROJECT CONTEXT:
+- Project: ${brief.projectName}
+- ${brief.oneLiner || ""}
+
+QUALITY:
+- Ultra high resolution, cinematic lighting, professional grade.
+- Modern, premium feel — this should look like a top-tier crypto project launch banner.
+- The composition should be balanced and visually striking.`;
 }
 
-async function generateBackground(prompt: string): Promise<string> {
+/**
+ * Build a gpt-image-1 prompt for text-to-image fallback (no logo integration).
+ */
+function buildFallbackPrompt(
+    visualThemes: VisualThemes,
+    brief: CreativeBrief,
+    tone: ToneProfile,
+    tagline: string
+): string {
+    return `Create a professional crypto token launch banner (landscape, 1536x1024).
+
+${visualThemes.image_prompt}
+
+Style: ${tone.theme} aesthetic, ${tone.profileName} tone.
+Brand colors: primary ${brief.brandColors.primary}, secondary ${brief.brandColors.secondary}.
+Project: ${brief.projectName}.
+Include the text "${tagline}" in clean modern typography.
+Ultra high resolution, cinematic lighting, professional grade, visually striking.`;
+}
+
+/**
+ * gpt-image-1 text-to-image fallback (no logo, just a banner with text).
+ * Returns base64-decoded buffer.
+ */
+async function generateWithoutLogo(prompt: string): Promise<Buffer> {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+    log.info({ promptLength: prompt.length }, "Sending text-only prompt to gpt-image-1");
+
     const response = await client.images.generate({
-        model: "dall-e-3",
+        model: "gpt-image-1",
         prompt,
         n: 1,
-        size: "1792x1024",
-        quality: "hd",
+        size: "1536x1024",
+        quality: "high",
     });
 
-    const imageUrl = response.data?.[0]?.url;
-    if (!imageUrl) throw new Error("No image URL in DALL-E response");
+    const b64 = response.data?.[0]?.b64_json;
+    if (!b64) throw new Error("No b64_json in gpt-image-1 response");
 
-    return imageUrl;
+    return Buffer.from(b64, "base64");
 }
 
-async function generateFallbackBackground(
+/**
+ * Last resort: generate a gradient image with the ticker text.
+ */
+async function generateFallbackGradient(
     ticker: string,
     colors: { primary: string; secondary: string }
-): Promise<string> {
-    // Generate a gradient placeholder and upload to S3
+): Promise<Buffer> {
     const svg = `<svg width="1200" height="628" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -120,139 +228,5 @@ async function generateFallbackBackground(
     </text>
   </svg>`;
 
-    const buffer = await sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
-    const key = `banners/fallback-${ticker.toLowerCase()}-${Date.now()}.jpg`;
-    return uploadBuffer(key, buffer, "image/jpeg");
-}
-
-async function compositeViaShotstack(
-    bgUrl: string,
-    logoUrl: string,
-    tagline: string,
-    colors: { primary: string; secondary: string }
-): Promise<string> {
-    const apiKey = process.env.SHOTSTACK_API_KEY;
-    if (!apiKey) throw new Error("SHOTSTACK_API_KEY not set");
-
-    const timeline = {
-        background: "#000000",
-        tracks: [
-            {
-                clips: [
-                    {
-                        asset: {
-                            type: "html",
-                            html: `<div style="font-family:Arial,sans-serif;color:white;text-align:center;padding:20px;">
-                <p style="font-size:28px;font-weight:bold;text-shadow:2px 2px 8px rgba(0,0,0,0.8);">${tagline}</p>
-              </div>`,
-                            width: 800,
-                            height: 100,
-                        },
-                        start: 0,
-                        length: 1,
-                        position: "bottom",
-                        offset: { y: -0.05 },
-                    },
-                ],
-            },
-            {
-                clips: [
-                    {
-                        asset: { type: "image", src: logoUrl },
-                        start: 0,
-                        length: 1,
-                        fit: "none",
-                        scale: 0.3,
-                        position: "center",
-                        offset: { y: 0.05 },
-                    },
-                ],
-            },
-            {
-                clips: [
-                    {
-                        asset: { type: "image", src: bgUrl },
-                        start: 0,
-                        length: 1,
-                        fit: "cover",
-                    },
-                ],
-            },
-        ],
-    };
-
-    const renderRes = await axios.post(
-        `${getShotstackBase()}/render`,
-        {
-            timeline,
-            output: {
-                format: "jpg",
-                resolution: "hd",
-                size: { width: 1200, height: 628 },
-            },
-        },
-        {
-            headers: {
-                "x-api-key": apiKey,
-                "Content-Type": "application/json",
-            },
-            timeout: 30000,
-        }
-    );
-
-    const renderId = renderRes.data?.response?.id;
-    if (!renderId) throw new Error("No render ID from Shotstack");
-
-    return await pollShotstackRender(renderId, apiKey);
-}
-
-async function pollShotstackRender(
-    renderId: string,
-    apiKey: string
-): Promise<string> {
-    const maxWait = 120_000;
-    const interval = 5_000;
-    const start = Date.now();
-
-    while (Date.now() - start < maxWait) {
-        const res = await axios.get(
-            `${getShotstackBase()}/render/${renderId}`,
-            {
-                headers: { "x-api-key": apiKey },
-                timeout: 10000,
-            }
-        );
-
-        const status = res.data?.response?.status;
-        if (status === "done") {
-            return res.data.response.url;
-        }
-        if (status === "failed") {
-            throw new Error(`Shotstack render failed: ${renderId}`);
-        }
-
-        await new Promise((r) => setTimeout(r, interval));
-    }
-
-    throw new Error(`Shotstack render timed out: ${renderId}`);
-}
-
-async function finalizeAndUpload(
-    imageUrl: string,
-    ticker: string
-): Promise<string> {
-    // Download the image
-    const res = await axios.get(imageUrl, {
-        responseType: "arraybuffer",
-        timeout: 30000,
-    });
-
-    // Resize to exact dimensions and convert to JPEG
-    const buffer = await sharp(Buffer.from(res.data))
-        .resize(1200, 628, { fit: "cover" })
-        .jpeg({ quality: 90 })
-        .toBuffer();
-
-    const key = `banners/${ticker.toLowerCase()}-${Date.now()}.jpg`;
-    return uploadBuffer(key, buffer, "image/jpeg");
+    return sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
 }

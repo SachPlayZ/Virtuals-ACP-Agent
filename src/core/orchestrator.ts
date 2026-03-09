@@ -190,6 +190,7 @@ export async function runPipeline(
         x_post_1: posts.posts[0],
         x_post_2: posts.posts[1],
         x_post_3: posts.posts[2],
+        produced_by: "HypePack PR | Zyther Studio",
         brand_colors: logo.brandColors,
         tone_profile: tone.profileName,
         confidence_level: confidenceLevel,

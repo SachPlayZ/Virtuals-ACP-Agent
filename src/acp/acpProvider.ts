@@ -119,6 +119,7 @@ export async function startAcpProvider(): Promise<void> {
                         x_post_1: output.x_post_1,
                         x_post_2: output.x_post_2,
                         x_post_3: output.x_post_3,
+                        produced_by: output.produced_by,
                     };
 
                     log.info(
